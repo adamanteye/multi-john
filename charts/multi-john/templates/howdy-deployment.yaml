@@ -19,8 +19,9 @@ spec:
     spec:
       serviceAccountName: multi-john-controller
       containers:
-        - args:
+        - command:
             - ./multijohn
+          args:
             - --mode=howdy
             - --logLevel={{ .Values.multijohn.logLevel }}
           env:

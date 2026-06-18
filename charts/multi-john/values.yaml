@@ -1,6 +1,6 @@
 multijohn:
   # Common configuration across the entire application.
-  imageName: ghcr.io/adamanteye/multi-john:0.1.5
+  imageName: ghcr.io/adamanteye/multi-john:0.1.6
   imagePullPolicy: IfNotPresent
   logLevel: debug
   # Shared workspace mounted into the controller and every worker Job at /work.
