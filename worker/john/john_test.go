@@ -8,27 +8,23 @@ import (
 )
 
 func TestArgsIncludeValuedAndValuelessFlags(t *testing.T) {
-	cmd := New("john", "hashes.txt", map[string]string{
-		"--format": "raw-sha256",
-		"--single": "",
-		"--node":   "1/5",
-	}, zap.NewNop())
+	cmd := New("john", "hashes.txt", []string{"--format=raw-sha256", "--single", "--node=1/5"}, zap.NewNop())
 
 	args := cmd.args()
-	want := map[string]bool{
-		"hashes.txt":          true,
-		potFlag:               true,
-		"--format=raw-sha256": true,
-		"--single":            true,
-		"--node=1/5":          true,
+	want := []string{
+		"hashes.txt",
+		potFlag,
+		"--format=raw-sha256",
+		"--single",
+		"--node=1/5",
 	}
 
 	if len(args) != len(want) {
 		t.Fatalf("got %d args, want %d: %v", len(args), len(want), args)
 	}
-	for _, arg := range args {
-		if !want[arg] {
-			t.Fatalf("unexpected arg %q in %v", arg, args)
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("arg %d = %q, want %q: %v", i, args[i], want[i], args)
 		}
 	}
 }

@@ -2,7 +2,6 @@ package john
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -18,17 +17,18 @@ var (
 type Cmd struct {
 	Bin      string
 	File     string
-	Flags    map[string]string
+	Args     []string
+	Env      []string
 	KillChan chan bool
 	Log      *zap.SugaredLogger
 	Results  chan []string
 }
 
-func New(bin string, file string, flags map[string]string, logger *zap.Logger) Cmd {
+func New(bin string, file string, args []string, logger *zap.Logger) Cmd {
 	return Cmd{
 		Bin:     bin,
 		File:    file,
-		Flags:   flags,
+		Args:    args,
 		Results: make(chan []string),
 		Log:     logger.Sugar(),
 	}
@@ -36,14 +36,8 @@ func New(bin string, file string, flags map[string]string, logger *zap.Logger) C
 
 func (c *Cmd) args() []string {
 	res := []string{c.File, potFlag}
-	for k, v := range c.Flags {
-		if v == "" {
-			res = append(res, k)
-		} else {
-			res = append(res, fmt.Sprintf("%v=%v", k, v))
-		}
-		c.Log.Debug(res)
-	}
+	res = append(res, c.Args...)
+	c.Log.Debug(res)
 	return res
 }
 
@@ -61,6 +55,9 @@ func (c *Cmd) Run() error {
 	}
 	c.WatchPotfile()
 	cmd := exec.Command(c.Bin, c.args()...)
+	if len(c.Env) > 0 {
+		cmd.Env = append(os.Environ(), c.Env...)
+	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {

@@ -5,7 +5,7 @@ const indexHTML = `<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>multi-john</title>
+  <title>John the Ripper</title>
   <style>
     :root {
       --bg: #fff;
@@ -202,6 +202,7 @@ const indexHTML = `<!doctype html>
     const statusEl = document.getElementById('formStatus');
     const submitEl = document.getElementById('submit');
     let selectedRunID = '';
+    const resultCountCache = {};
 
     async function request(path, options) {
       const res = await fetch(path, options);
@@ -228,9 +229,10 @@ const indexHTML = `<!doctype html>
         jobs.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
         const rows = jobs.map((job) => {
           const progress = (job.succeeded || 0) + '/' + (job.completions || 0);
-          return '<tr><td>' + escapeHTML(job.runID) + '</td><td>' + progress + '</td><td>' + (job.active || 0) + '</td><td>' + (job.failed || 0) + '</td><td><button type="button" data-run="' + escapeHTML(job.runID) + '">View</button></td></tr>';
+          const resultCount = Object.prototype.hasOwnProperty.call(resultCountCache, job.runID) ? resultCountCache[job.runID] : '';
+          return '<tr><td>' + escapeHTML(job.runID) + '</td><td>' + progress + '</td><td>' + escapeHTML(resultCount) + '</td><td>' + (job.active || 0) + '</td><td>' + (job.failed || 0) + '</td><td><button type="button" data-run="' + escapeHTML(job.runID) + '">View</button></td></tr>';
         }).join('');
-        jobsEl.innerHTML = '<table><thead><tr><th>Run</th><th>Done</th><th>Active</th><th>Failed</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+        jobsEl.innerHTML = '<table><thead><tr><th>Run</th><th>Done</th><th>Results</th><th>Active</th><th>Failed</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
         for (const button of jobsEl.querySelectorAll('button[data-run]')) {
           button.addEventListener('click', () => loadResults(button.dataset.run));
         }
@@ -264,10 +266,21 @@ const indexHTML = `<!doctype html>
       selectedRunID = runID;
       try {
         const results = await request('/api/results?runID=' + encodeURIComponent(runID));
+        resultCountCache[runID] = countResults(results);
         resultsEl.textContent = JSON.stringify(results, null, 2);
+        await loadJobs();
       } catch (err) {
         resultsEl.textContent = err.message;
       }
+    }
+
+    function countResults(results) {
+      let count = 0;
+      const nodes = results.node || {};
+      for (const node of Object.values(nodes)) {
+        if (Array.isArray(node.results)) count += node.results.length;
+      }
+      return count;
     }
 
     function parseNodeSelector(value) {

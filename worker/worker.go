@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -43,22 +44,15 @@ func New(logger *zap.Logger, cli *clientv3.Client, johnFile string, johnFlags st
 	return runIndexed(logger, cli, johnPath, johnFile, flags, runID, index+1, totalNodes)
 }
 
-func parseFlags(johnFlags string) map[string]string {
-	flags := map[string]string{}
-	fl := strings.Split(johnFlags, ",")
-	if len(fl[0]) == 0 {
-		return flags
+func parseFlags(johnFlags string) []string {
+	if strings.TrimSpace(johnFlags) == "" {
+		return nil
 	}
-	for _, flag := range fl {
-		f := strings.SplitN(strings.TrimSpace(flag), "=", 2)
-		if f[0] == "" {
-			continue
+	flags := []string{}
+	for _, flag := range strings.Split(johnFlags, ",") {
+		if flag = strings.TrimSpace(flag); flag != "" {
+			flags = append(flags, flag)
 		}
-		value := ""
-		if len(f) == 2 {
-			value = f[1]
-		}
-		flags[f[0]] = value
 	}
 	return flags
 }
@@ -76,11 +70,19 @@ func completionIndex() (int, error) {
 	return 0, fmt.Errorf("indexed worker missing JOB_COMPLETION_INDEX")
 }
 
-func runIndexed(logger *zap.Logger, cli *clientv3.Client, johnPath, johnFile string, flags map[string]string, runID string, nodeNumber, totalNodes int) error {
+func runIndexed(logger *zap.Logger, cli *clientv3.Client, johnPath, johnFile string, flags []string, runID string, nodeNumber, totalNodes int) error {
 	sugar := logger.Sugar()
-	flags["--node"] = fmt.Sprintf("%v/%v", nodeNumber, totalNodes)
+	flags = withoutNodeFlag(flags)
+	flags = append(flags,
+		fmt.Sprintf("--node=%v/%v", nodeNumber, totalNodes),
+	)
 
 	cmd := john.New(johnPath, johnFile, flags, logger)
+	ompThreads := ""
+	if _, ok := os.LookupEnv("OMP_NUM_THREADS"); !ok {
+		ompThreads = strconv.Itoa(defaultOMPThreads())
+		cmd.Env = append(cmd.Env, "OMP_NUM_THREADS="+ompThreads)
+	}
 	statusPath := fmt.Sprintf("runs/%s/nodes/%d/status", runID, nodeNumber)
 	resultsPath := fmt.Sprintf("runs/%s/nodes/%d/results", runID, nodeNumber)
 
@@ -101,11 +103,122 @@ func runIndexed(logger *zap.Logger, cli *clientv3.Client, johnPath, johnFile str
 		}
 	}()
 
-	sugar.Infof("starting indexed worker run=%s node=%d/%d", runID, nodeNumber, totalNodes)
+	if ompThreads != "" {
+		sugar.Infof("starting indexed worker run=%s node=%d/%d omp_threads=%s", runID, nodeNumber, totalNodes, ompThreads)
+	} else {
+		sugar.Infof("starting indexed worker run=%s node=%d/%d", runID, nodeNumber, totalNodes)
+	}
 	if err := cmd.Run(); err != nil {
 		_, _ = cli.KV.Put(context.TODO(), statusPath, "failed: "+err.Error())
 		return err
 	}
 	_, err := cli.KV.Put(context.TODO(), statusPath, "completed")
 	return err
+}
+
+func defaultOMPThreads() int {
+	capacity := len(allowedCPUs())
+	if capacity == 0 {
+		capacity = runtime.NumCPU()
+	}
+	if quota := cpuQuotaCores(); quota > 0 && quota < capacity {
+		capacity = quota
+	}
+	if capacity < 1 {
+		return 1
+	}
+	return capacity
+}
+
+func allowedCPUs() []int {
+	for _, path := range []string{
+		"/sys/fs/cgroup/cpuset.cpus.effective",
+		"/sys/fs/cgroup/cpuset/cpuset.cpus",
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if cpus := parseCPUSet(strings.TrimSpace(string(data))); len(cpus) > 0 {
+			return cpus
+		}
+	}
+	return nil
+}
+
+func cpuQuotaCores() int {
+	data, err := os.ReadFile("/sys/fs/cgroup/cpu.max")
+	if err != nil {
+		return 0
+	}
+	return parseCPUQuota(strings.TrimSpace(string(data)))
+}
+
+func parseCPUQuota(value string) int {
+	fields := strings.Fields(value)
+	if len(fields) != 2 || fields[0] == "max" {
+		return 0
+	}
+	quota, err := strconv.Atoi(fields[0])
+	if err != nil || quota <= 0 {
+		return 0
+	}
+	period, err := strconv.Atoi(fields[1])
+	if err != nil || period <= 0 {
+		return 0
+	}
+	cores := quota / period
+	if quota%period != 0 {
+		cores++
+	}
+	if cores < 1 {
+		return 1
+	}
+	return cores
+}
+
+func parseCPUSet(value string) []int {
+	cpus := []int{}
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if start, end, ok := strings.Cut(part, "-"); ok {
+			from, err := strconv.Atoi(start)
+			if err != nil {
+				continue
+			}
+			to, err := strconv.Atoi(end)
+			if err != nil || to < from {
+				continue
+			}
+			for cpu := from; cpu <= to; cpu++ {
+				cpus = append(cpus, cpu)
+			}
+			continue
+		}
+		cpu, err := strconv.Atoi(part)
+		if err == nil {
+			cpus = append(cpus, cpu)
+		}
+	}
+	return cpus
+}
+
+func withoutNodeFlag(flags []string) []string {
+	filtered := make([]string, 0, len(flags))
+	for _, flag := range flags {
+		name := flag
+		if key, _, ok := strings.Cut(flag, "="); ok {
+			name = key
+		}
+		switch name {
+		case "--node":
+			continue
+		default:
+			filtered = append(filtered, flag)
+		}
+	}
+	return filtered
 }

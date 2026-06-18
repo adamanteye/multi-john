@@ -1,6 +1,6 @@
 multijohn:
   # Common configuration across the entire application.
-  imageName: ghcr.io/adamanteye/multi-john:0.1.7
+  imageName: ghcr.io/adamanteye/multi-john:0.1.9
   imagePullPolicy: IfNotPresent
   logLevel: debug
   # Shared workspace mounted into the controller and every worker Job at /work.
@@ -43,8 +43,8 @@ multijohn:
               - multi-john/run-id
     resources:
       requests:
-        memory: "64Mi"
-        cpu: "250m"
+        memory: "1024Mi"
+        cpu: "8000m"
       # Limits are intentionally empty by default. John can burst; memory/cpu
       # limits may kill long-running cracking pods under real workloads.
       limits: {}
