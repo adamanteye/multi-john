@@ -90,6 +90,8 @@ func main() {
 		if err != nil {
 			sugar.Panic(err)
 		}
+		sugar.Info("worker completed")
+		return
 	default:
 		sugar.Panicf("`%v` is not a valid mode", mode)
 	}
