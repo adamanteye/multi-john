@@ -8,5 +8,3 @@ jobs:
     permissions:
       contents: write
     uses: adamanteye/actions/.github/workflows/helm.yml@master
-    with:
-      charts_dir: charts

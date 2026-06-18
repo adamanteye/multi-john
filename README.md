@@ -1,21 +1,19 @@
 # multi-john
 
-Run [John the Ripper](https://github.com/openwall/john), but coordinated on many machines.
+Kubernetes controller and Web UI for running [John the Ripper](https://github.com/openwall/john) as Indexed Jobs.
 
 ## Image
 
-Sporadic releases on Docker hub; `praktiskt/multi-john:latest`.
+`ghcr.io/adamanteye/multi-john:0.1.1`
 
-## Helm chart
+## Deploy
 
-The intended deployment path is Kubernetes via the Helm chart. See [charts/multi-john](./charts/multi-john).
+```shell
+kubectl create namespace <namespace>
+helm install multi-john ./charts/multi-john -n <namespace> --values charts/multi-john/values.yaml
+kubectl port-forward -n <namespace> service/howdy 8080:8080
+```
 
-## How it works
+Open `http://localhost:8080`, submit hashes, flags, shard count, and optional node selector.
 
-`multi-john` installs a small Kubernetes control plane:
-
-- `etcd` - stores worker status and cracked results.
-- `howdy` - exposes a Web UI and API for submitting jobs and viewing results.
-- `worker` - runs inside per-crack Kubernetes Indexed Jobs created by `howdy`.
-
-For each run, `howdy` creates a Kubernetes Secret containing the hash input and an Indexed Job with one worker shard per completion index. Workers mount the Secret, run John the Ripper with `--node=N/M`, and publish potfile results back to etcd under that run id.
+Each run creates a Secret for the hash input and an Indexed Job for workers. Workers run John with `--node=N/M` and write results to etcd.

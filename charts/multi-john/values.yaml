@@ -1,17 +1,15 @@
 multijohn:
   # Common configuration across the entire application.
   totalNodes: 5
-  imageName: praktiskt/multi-john:bf184dba2942cda128b07e46bd54e13e30094c4f
+  imageName: ghcr.io/adamanteye/multi-john:0.1.1
   imagePullPolicy: IfNotPresent
   logLevel: debug
-
   # Howdy is where you can find your results.
   howdy:
     port: 8080
     serviceType: NodePort
     jobTTLSecondsAfterFinished: 86400
     jobActiveDeadlineSeconds: 86400
-
   # Jobs created by the web controller run one worker pod per indexed shard.
   node:
     requests:
@@ -27,7 +25,6 @@ multijohn:
     johnFile:
       path: /input
       file: hashes
-
 etcd:
   # Single-node etcd used by multi-john for worker coordination and result storage.
   replicas: 1
