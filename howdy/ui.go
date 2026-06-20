@@ -45,12 +45,6 @@ const indexHTML = `<!doctype html>
       box-shadow: 0 0.1em 0 var(--border);
       margin-bottom: 1em;
     }
-    header p {
-      margin: 0;
-      font-size: 1.5em;
-      line-height: 1.2;
-      font-weight: 600;
-    }
     h1, h2 {
       line-height: 1.2;
       font-weight: 600;
@@ -166,10 +160,10 @@ const indexHTML = `<!doctype html>
 </head>
 <body>
   <header>
-    <p>multi-john</p>
+    <h1>John the Ripper</h1>
   </header>
   <main>
-    <h1>Submit</h1>
+    <h2>Submit</h2>
     <form id="jobForm">
       <label><span>Run name</span><input id="name" autocomplete="off" placeholder="raw-sha256-batch"></label>
       <label><span>Hashes</span><textarea id="hashes" required spellcheck="false"></textarea></label>

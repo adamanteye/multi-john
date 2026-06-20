@@ -58,8 +58,6 @@ func TestJobSpecMountsWorkPVCAndAppliesPodTemplatePatch(t *testing.T) {
 		"run-id",
 		5,
 		5,
-		3600,
-		3600,
 		map[string]string{"multi-john/run-id": "run-id"},
 	)
 	if err != nil {
@@ -105,6 +103,12 @@ func TestJobSpecMountsWorkPVCAndAppliesPodTemplatePatch(t *testing.T) {
 	if volume := volumeByName(template.Spec.Volumes, "scratch"); volume == nil || volume.EmptyDir == nil {
 		t.Fatalf("scratch volume = %#v, want emptyDir", volume)
 	}
+	if job.Spec.ActiveDeadlineSeconds != nil {
+		t.Fatalf("activeDeadlineSeconds = %v, want nil", *job.Spec.ActiveDeadlineSeconds)
+	}
+	if job.Spec.TTLSecondsAfterFinished != nil {
+		t.Fatalf("ttlSecondsAfterFinished = %v, want nil", *job.Spec.TTLSecondsAfterFinished)
+	}
 }
 
 func TestJobSpecRejectsInvalidPodTemplatePatch(t *testing.T) {
@@ -116,8 +120,6 @@ func TestJobSpecRejectsInvalidPodTemplatePatch(t *testing.T) {
 		"run-id",
 		1,
 		1,
-		3600,
-		3600,
 		map[string]string{"multi-john/run-id": "run-id"},
 	)
 	if err == nil {
@@ -137,8 +139,6 @@ func TestJobSpecOmitsEmptyResourceLimits(t *testing.T) {
 		"run-id",
 		1,
 		1,
-		3600,
-		3600,
 		map[string]string{"multi-john/run-id": "run-id"},
 	)
 	if err != nil {

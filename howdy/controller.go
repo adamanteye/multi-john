@@ -37,36 +37,32 @@ type Controller struct {
 }
 
 type ControllerConfig struct {
-	Namespace               string
-	Image                   string
-	ImagePullPolicy         string
-	EtcdEndpoint            string
-	JohnPath                string
-	InputPath               string
-	InputFile               string
-	WorkPath                string
-	WorkPVCName             string
-	LogLevel                string
-	DefaultJohnFlags        string
-	DefaultTotalNodes       int32
-	TTLSecondsAfterFinished int32
-	ActiveDeadlineSeconds   int64
-	RequestCPU              string
-	RequestMemory           string
-	LimitCPU                string
-	LimitMemory             string
-	WorkerPodTemplatePatch  string
+	Namespace              string
+	Image                  string
+	ImagePullPolicy        string
+	EtcdEndpoint           string
+	JohnPath               string
+	InputPath              string
+	InputFile              string
+	WorkPath               string
+	WorkPVCName            string
+	LogLevel               string
+	DefaultJohnFlags       string
+	DefaultTotalNodes      int32
+	RequestCPU             string
+	RequestMemory          string
+	LimitCPU               string
+	LimitMemory            string
+	WorkerPodTemplatePatch string
 }
 
 type CreateJobRequest struct {
-	Name                    string            `json:"name"`
-	Hashes                  string            `json:"hashes"`
-	JohnFlags               string            `json:"johnFlags"`
-	TotalNodes              int32             `json:"totalNodes"`
-	Parallelism             int32             `json:"parallelism"`
-	TTLSecondsAfterFinished int32             `json:"ttlSecondsAfterFinished"`
-	ActiveDeadlineSeconds   int64             `json:"activeDeadlineSeconds"`
-	NodeSelector            map[string]string `json:"nodeSelector"`
+	Name         string            `json:"name"`
+	Hashes       string            `json:"hashes"`
+	JohnFlags    string            `json:"johnFlags"`
+	TotalNodes   int32             `json:"totalNodes"`
+	Parallelism  int32             `json:"parallelism"`
+	NodeSelector map[string]string `json:"nodeSelector"`
 }
 
 type CreatedJob struct {
@@ -104,25 +100,23 @@ func NewControllerFromEnv(logger *zap.Logger) (*Controller, error) {
 
 func controllerConfigFromEnv() ControllerConfig {
 	return ControllerConfig{
-		Namespace:               envString("MULTI_JOHN_NAMESPACE", namespace()),
-		Image:                   envString("MULTI_JOHN_IMAGE", "multi-john:latest"),
-		ImagePullPolicy:         envString("MULTI_JOHN_IMAGE_PULL_POLICY", string(corev1.PullIfNotPresent)),
-		EtcdEndpoint:            envString("ETCD_ADVERTISE_CLIENT_URLS", "etcd:2379"),
-		JohnPath:                envString("MULTI_JOHN_JOHN_PATH", "john"),
-		InputPath:               envString("MULTI_JOHN_INPUT_PATH", "/input"),
-		InputFile:               envString("MULTI_JOHN_INPUT_FILE", "hashes"),
-		WorkPath:                envString("MULTI_JOHN_WORK_PATH", "/work"),
-		WorkPVCName:             envString("MULTI_JOHN_WORK_PVC_NAME", ""),
-		LogLevel:                envString("MULTI_JOHN_LOG_LEVEL", "info"),
-		DefaultJohnFlags:        envString("MULTI_JOHN_DEFAULT_JOHN_FLAGS", ""),
-		DefaultTotalNodes:       envInt32("MULTI_JOHN_DEFAULT_TOTAL_NODES", 2),
-		TTLSecondsAfterFinished: envInt32("MULTI_JOHN_JOB_TTL_SECONDS_AFTER_FINISHED", 86400),
-		ActiveDeadlineSeconds:   envInt64("MULTI_JOHN_JOB_ACTIVE_DEADLINE_SECONDS", 86400),
-		RequestCPU:              envString("MULTI_JOHN_WORKER_REQUEST_CPU", "250m"),
-		RequestMemory:           envString("MULTI_JOHN_WORKER_REQUEST_MEMORY", "64Mi"),
-		LimitCPU:                envString("MULTI_JOHN_WORKER_LIMIT_CPU", ""),
-		LimitMemory:             envString("MULTI_JOHN_WORKER_LIMIT_MEMORY", ""),
-		WorkerPodTemplatePatch:  envString("MULTI_JOHN_WORKER_POD_TEMPLATE_PATCH", ""),
+		Namespace:              envString("MULTI_JOHN_NAMESPACE", namespace()),
+		Image:                  envString("MULTI_JOHN_IMAGE", "multi-john:latest"),
+		ImagePullPolicy:        envString("MULTI_JOHN_IMAGE_PULL_POLICY", string(corev1.PullIfNotPresent)),
+		EtcdEndpoint:           envString("ETCD_ADVERTISE_CLIENT_URLS", "etcd:2379"),
+		JohnPath:               envString("MULTI_JOHN_JOHN_PATH", "john"),
+		InputPath:              envString("MULTI_JOHN_INPUT_PATH", "/input"),
+		InputFile:              envString("MULTI_JOHN_INPUT_FILE", "hashes"),
+		WorkPath:               envString("MULTI_JOHN_WORK_PATH", "/work"),
+		WorkPVCName:            envString("MULTI_JOHN_WORK_PVC_NAME", ""),
+		LogLevel:               envString("MULTI_JOHN_LOG_LEVEL", "info"),
+		DefaultJohnFlags:       envString("MULTI_JOHN_DEFAULT_JOHN_FLAGS", ""),
+		DefaultTotalNodes:      envInt32("MULTI_JOHN_DEFAULT_TOTAL_NODES", 2),
+		RequestCPU:             envString("MULTI_JOHN_WORKER_REQUEST_CPU", "250m"),
+		RequestMemory:          envString("MULTI_JOHN_WORKER_REQUEST_MEMORY", "64Mi"),
+		LimitCPU:               envString("MULTI_JOHN_WORKER_LIMIT_CPU", ""),
+		LimitMemory:            envString("MULTI_JOHN_WORKER_LIMIT_MEMORY", ""),
+		WorkerPodTemplatePatch: envString("MULTI_JOHN_WORKER_POD_TEMPLATE_PATCH", ""),
 	}
 }
 
@@ -147,15 +141,6 @@ func (c *Controller) CreateJob(ctx context.Context, req CreateJobRequest) (Creat
 	}
 	if parallelism > totalNodes {
 		return CreatedJob{}, fmt.Errorf("parallelism cannot exceed totalNodes")
-	}
-
-	ttl := req.TTLSecondsAfterFinished
-	if ttl < 1 {
-		ttl = c.config.TTLSecondsAfterFinished
-	}
-	deadline := req.ActiveDeadlineSeconds
-	if deadline < 1 {
-		deadline = c.config.ActiveDeadlineSeconds
 	}
 
 	runID := runID(req.Name)
@@ -184,7 +169,7 @@ func (c *Controller) CreateJob(ctx context.Context, req CreateJobRequest) (Creat
 		return CreatedJob{}, err
 	}
 
-	jobSpec, err := c.jobSpec(req, jobName, secretName, runID, totalNodes, parallelism, ttl, deadline, labels)
+	jobSpec, err := c.jobSpec(req, jobName, secretName, runID, totalNodes, parallelism, labels)
 	if err != nil {
 		if deleteErr := c.client.CoreV1().Secrets(c.config.Namespace).Delete(ctx, secretName, metav1.DeleteOptions{}); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
 			c.log.Error(deleteErr)
@@ -210,7 +195,7 @@ func (c *Controller) CreateJob(ctx context.Context, req CreateJobRequest) (Creat
 	return CreatedJob{RunID: runID, JobName: jobName, SecretName: secretName}, nil
 }
 
-func (c *Controller) jobSpec(req CreateJobRequest, jobName, secretName, runID string, totalNodes, parallelism, ttl int32, deadline int64, labels map[string]string) (*batchv1.Job, error) {
+func (c *Controller) jobSpec(req CreateJobRequest, jobName, secretName, runID string, totalNodes, parallelism int32, labels map[string]string) (*batchv1.Job, error) {
 	mode := batchv1.IndexedCompletion
 	backoffLimit := int32(0)
 	inputFile := c.config.InputPath + "/" + c.config.InputFile
@@ -224,12 +209,10 @@ func (c *Controller) jobSpec(req CreateJobRequest, jobName, secretName, runID st
 			Labels:    labels,
 		},
 		Spec: batchv1.JobSpec{
-			Completions:             &totalNodes,
-			Parallelism:             &parallelism,
-			CompletionMode:          &mode,
-			BackoffLimit:            &backoffLimit,
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
+			Completions:    &totalNodes,
+			Parallelism:    &parallelism,
+			CompletionMode: &mode,
+			BackoffLimit:   &backoffLimit,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
@@ -491,15 +474,6 @@ func envInt32(key string, fallback int32) int32 {
 	if value, ok := os.LookupEnv(key); ok && value != "" {
 		if parsed, err := strconv.ParseInt(value, 10, 32); err == nil && parsed > 0 {
 			return int32(parsed)
-		}
-	}
-	return fallback
-}
-
-func envInt64(key string, fallback int64) int64 {
-	if value, ok := os.LookupEnv(key); ok && value != "" {
-		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil && parsed > 0 {
-			return parsed
 		}
 	}
 	return fallback

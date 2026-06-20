@@ -22,8 +22,6 @@ multijohn:
     # UI/controller defaults only. Each run still submits its own values.
     defaultTotalNodes: 5
     defaultJohnFlags: ""
-    jobTTLSecondsAfterFinished: 86400
-    jobActiveDeadlineSeconds: 86400
   # Worker pod defaults for Jobs created by the controller.
   worker:
     # Strategic merge patch applied to the generated worker PodTemplateSpec.

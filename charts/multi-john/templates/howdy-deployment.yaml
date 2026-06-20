@@ -53,10 +53,6 @@ spec:
             - name: MULTI_JOHN_WORK_PVC_NAME
               value: {{ default .Values.multijohn.work.name .Values.multijohn.work.existingClaim | quote }}
             {{- end }}
-            - name: MULTI_JOHN_JOB_TTL_SECONDS_AFTER_FINISHED
-              value: "{{ .Values.multijohn.howdy.jobTTLSecondsAfterFinished }}"
-            - name: MULTI_JOHN_JOB_ACTIVE_DEADLINE_SECONDS
-              value: "{{ .Values.multijohn.howdy.jobActiveDeadlineSeconds }}"
             - name: MULTI_JOHN_WORKER_REQUEST_CPU
               value: {{ .Values.multijohn.worker.resources.requests.cpu | quote }}
             - name: MULTI_JOHN_WORKER_REQUEST_MEMORY
