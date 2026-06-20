@@ -1,18 +1,24 @@
+{{- if .Values.serviceAccount.create }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   labels:
-    app.kubernetes.io/name: multi-john
+    {{- include "john.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
-  name: multi-john-controller
+  name: {{ include "john.serviceAccountName" . }}
+  {{- with .Values.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 ---
+{{- end }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   labels:
-    app.kubernetes.io/name: multi-john
+    {{- include "john.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
-  name: multi-john-controller
+  name: {{ include "john.controllerName" . }}
 rules:
   - apiGroups:
       - batch
@@ -46,13 +52,13 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   labels:
-    app.kubernetes.io/name: multi-john
+    {{- include "john.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
-  name: multi-john-controller
+  name: {{ include "john.controllerName" . }}
 subjects:
   - kind: ServiceAccount
-    name: multi-john-controller
+    name: {{ include "john.serviceAccountName" . }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: multi-john-controller
+  name: {{ include "john.controllerName" . }}

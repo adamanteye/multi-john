@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    {{- include "john.labels" . | nindent 4 }}
+    app.kubernetes.io/component: howdy
+  name: {{ include "john.howdyName" . }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "john.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: howdy
+  template:
+    metadata:
+      labels:
+        {{- include "john.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: howdy
+    spec:
+      serviceAccountName: {{ include "john.serviceAccountName" . }}
+      containers:
+        - command:
+            - ./multijohn
+          args:
+            - --mode=howdy
+            - --logLevel={{ .Values.john.logLevel }}
+          env:
+            - name: ETCD_ADVERTISE_CLIENT_URLS
+              value: {{ include "john.etcdClientURL" . | quote }}
+            - name: JOHN_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: JOHN_IMAGE
+              value: {{ .Values.john.imageName | quote }}
+            - name: JOHN_IMAGE_PULL_POLICY
+              value: {{ .Values.john.imagePullPolicy | quote }}
+            - name: JOHN_DEFAULT_TOTAL_NODES
+              value: {{ .Values.john.howdy.defaultTotalNodes | quote }}
+            - name: JOHN_DEFAULT_FLAGS
+              value: {{ .Values.john.howdy.defaultJohnFlags | quote }}
+            - name: JOHN_LOG_LEVEL
+              value: {{ .Values.john.logLevel | quote }}
+            - name: JOHN_BINARY_PATH
+              value: {{ .Values.john.worker.johnPath | quote }}
+            - name: JOHN_INPUT_PATH
+              value: {{ .Values.john.worker.input.path | quote }}
+            - name: JOHN_INPUT_FILE
+              value: {{ .Values.john.worker.input.file | quote }}
+            {{- if .Values.john.work.enabled }}
+            - name: JOHN_WORK_PATH
+              value: {{ .Values.john.work.mountPath | quote }}
+            - name: JOHN_WORK_PVC_NAME
+              value: {{ default (include "john.workPVCName" .) .Values.john.work.existingClaim | quote }}
+            {{- end }}
+            - name: JOHN_INSTANCE
+              value: {{ .Release.Name | quote }}
+            - name: JOHN_WORKER_REQUEST_CPU
+              value: {{ .Values.john.worker.resources.requests.cpu | quote }}
+            - name: JOHN_WORKER_REQUEST_MEMORY
+              value: {{ .Values.john.worker.resources.requests.memory | quote }}
+            - name: JOHN_WORKER_LIMIT_CPU
+              value: {{ default "" .Values.john.worker.resources.limits.cpu | quote }}
+            - name: JOHN_WORKER_LIMIT_MEMORY
+              value: {{ default "" .Values.john.worker.resources.limits.memory | quote }}
+            - name: JOHN_WORKER_POD_TEMPLATE_PATCH
+              value: {{ tpl (.Values.john.worker.podTemplatePatch | default dict | toJson) . | quote }}
+          image: {{ .Values.john.imageName | quote }}
+          imagePullPolicy: {{ .Values.john.imagePullPolicy }}
+          name: howdy
+          ports:
+            - name: http
+              containerPort: {{ int .Values.john.howdy.port }}
+          resources: {}
+          {{- if .Values.john.work.enabled }}
+          volumeMounts:
+            - name: work
+              mountPath: {{ .Values.john.work.mountPath | quote }}
+          {{- end }}
+      restartPolicy: Always
+      {{- if .Values.john.work.enabled }}
+      volumes:
+        - name: work
+          persistentVolumeClaim:
+            claimName: {{ default (include "john.workPVCName" .) .Values.john.work.existingClaim | quote }}
+      {{- end }}

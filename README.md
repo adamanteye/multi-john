@@ -1,4 +1,4 @@
-# multi-john
+# john
 
 Kubernetes controller and Web UI for running [John the Ripper](https://github.com/openwall/john) as Indexed Jobs.
 
@@ -6,8 +6,8 @@ Kubernetes controller and Web UI for running [John the Ripper](https://github.co
 
 ```shell
 kubectl create namespace <namespace>
-helm install multi-john ./charts/multi-john -n <namespace> --values charts/multi-john/values.yaml
-kubectl port-forward -n <namespace> service/howdy 8080:8080
+helm install john ./charts/john -n <namespace> --values charts/john/values.yaml
+kubectl port-forward -n <namespace> service/john-howdy 8080:8080
 ```
 
 Open `http://localhost:8080`, submit hashes, flags, shard count, and optional node selector.
@@ -18,10 +18,10 @@ The chart creates a shared `/work` PVC by default and mounts it into both the We
 
 Values configure the controller, UI defaults, and worker runtime defaults. Hashes, shard count, John flags, and node selector are submitted per run through the controller.
 
-Worker Pods can be customized through `multijohn.worker.podTemplatePatch`, which is applied as a Kubernetes strategic merge patch to the generated Job `spec.template`. For example:
+Worker Pods can be customized through `john.worker.podTemplatePatch`, which is applied as a Kubernetes strategic merge patch to the generated Job `spec.template`. For example:
 
 ```yaml
-multijohn:
+john:
   worker:
     podTemplatePatch:
       spec:
@@ -31,10 +31,11 @@ multijohn:
             whenUnsatisfiable: ScheduleAnyway
             labelSelector:
               matchLabels:
-                app.kubernetes.io/name: multi-john
+                app.kubernetes.io/name: john
+                app.kubernetes.io/instance: "{{ .Release.Name }}"
                 app.kubernetes.io/component: worker
             matchLabelKeys:
-              - multi-john/run-id
+              - john/run-id
         priorityClassName: batch
         tolerations:
           - key: dedicated

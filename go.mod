@@ -1,4 +1,4 @@
-module github.com/magnusfurugard/multi-john
+module github.com/adamanteye/john
 
 go 1.26.0
 

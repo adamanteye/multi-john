@@ -1,0 +1,22 @@
+{{- if and .Values.john.work.enabled (not .Values.john.work.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    {{- include "john.labels" . | nindent 4 }}
+    app.kubernetes.io/component: work
+  name: {{ include "john.workPVCName" . }}
+  {{- with .Values.john.work.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml .Values.john.work.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.john.work.size | quote }}
+  {{- if .Values.john.work.storageClassName }}
+  storageClassName: {{ .Values.john.work.storageClassName | quote }}
+  {{- end }}
+{{- end }}

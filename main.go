@@ -8,8 +8,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/magnusfurugard/multi-john/howdy"
-	"github.com/magnusfurugard/multi-john/worker"
+	"github.com/adamanteye/john/howdy"
+	"github.com/adamanteye/john/worker"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"

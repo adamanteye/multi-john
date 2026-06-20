@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/magnusfurugard/multi-john/worker/john"
+	"github.com/adamanteye/john/worker/john"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -33,9 +33,9 @@ func New(logger *zap.Logger, cli *clientv3.Client, johnFile string, johnFlags st
 		johnPath = j
 	}
 
-	runID, ok := os.LookupEnv("MULTI_JOHN_RUN_ID")
+	runID, ok := os.LookupEnv("JOHN_RUN_ID")
 	if !ok || runID == "" {
-		return fmt.Errorf("worker requires MULTI_JOHN_RUN_ID")
+		return fmt.Errorf("worker requires JOHN_RUN_ID")
 	}
 	index, err := completionIndex()
 	if err != nil {
@@ -58,7 +58,7 @@ func parseFlags(johnFlags string) []string {
 }
 
 func completionIndex() (int, error) {
-	for _, key := range []string{"JOB_COMPLETION_INDEX", "MULTI_JOHN_NODE_INDEX"} {
+	for _, key := range []string{"JOB_COMPLETION_INDEX", "JOHN_NODE_INDEX"} {
 		if value, ok := os.LookupEnv(key); ok && value != "" {
 			index, err := strconv.Atoi(value)
 			if err != nil || index < 0 {

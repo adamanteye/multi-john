@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    {{- include "john.labels" . | nindent 4 }}
+    app.kubernetes.io/component: howdy
+  name: {{ include "john.howdyName" . }}
+spec:
+  ports:
+    - name: http
+      port: {{ .Values.john.howdy.port }}
+      targetPort: http
+  selector:
+    {{- include "john.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: howdy
+  type: {{ .Values.john.howdy.serviceType }}

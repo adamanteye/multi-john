@@ -1,13 +1,21 @@
-multijohn:
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+john:
   # Common configuration across the entire application.
-  imageName: ghcr.io/adamanteye/multi-john:0.2.0
+  imageName: ghcr.io/adamanteye/john:0.1.0
   imagePullPolicy: IfNotPresent
   logLevel: debug
   # Shared workspace mounted into the controller and every worker Job at /work.
   # Use a ReadWriteMany-capable StorageClass or set existingClaim to a PVC you manage.
   work:
     enabled: true
-    name: multi-john-work
+    name: ""
     existingClaim: ""
     mountPath: /work
     accessModes:
@@ -35,10 +43,11 @@ multijohn:
             whenUnsatisfiable: ScheduleAnyway
             labelSelector:
               matchLabels:
-                app.kubernetes.io/name: multi-john
+                app.kubernetes.io/name: john
+                app.kubernetes.io/instance: "{{ .Release.Name }}"
                 app.kubernetes.io/component: worker
             matchLabelKeys:
-              - multi-john/run-id
+              - john/run-id
     resources:
       requests:
         memory: "1024Mi"
@@ -52,18 +61,18 @@ multijohn:
       path: /input
       file: hashes
 etcd:
-  # Single-node etcd used by multi-john for worker coordination and result storage.
+  # Single-node etcd for worker coordination and result storage.
   replicas: 1
   imageName: quay.io/coreos/etcd:v3.6.11
   imagePullPolicy: IfNotPresent
   port: 2379
   peerPort: 2380
-  clientURL: http://etcd:2379
+  clientURL: ""
   listenClientURLs: http://[::]:2379
-  advertiseClientURLs: http://etcd:2379
+  advertiseClientURLs: ""
   listenPeerURLs: http://[::]:2380
-  initialAdvertisePeerURLs: http://etcd:2380
-  initialCluster: etcd=http://etcd:2380
+  initialAdvertisePeerURLs: ""
+  initialCluster: ""
   requests:
     memory: "128Mi"
     cpu: "1000m"

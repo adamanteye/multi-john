@@ -58,7 +58,7 @@ func TestJobSpecMountsWorkPVCAndAppliesPodTemplatePatch(t *testing.T) {
 		"run-id",
 		5,
 		5,
-		map[string]string{"multi-john/run-id": "run-id"},
+		map[string]string{runIDLabel: "run-id"},
 	)
 	if err != nil {
 		t.Fatalf("jobSpec returned error: %v", err)
@@ -97,8 +97,8 @@ func TestJobSpecMountsWorkPVCAndAppliesPodTemplatePatch(t *testing.T) {
 	if mount := volumeMountByName(worker.VolumeMounts, "scratch"); mount == nil || mount.MountPath != "/scratch" {
 		t.Fatalf("scratch volume mount = %#v, want /scratch", mount)
 	}
-	if volume := volumeByName(template.Spec.Volumes, workVolumeName); volume == nil || volume.PersistentVolumeClaim == nil || volume.PersistentVolumeClaim.ClaimName != "multi-john-work" {
-		t.Fatalf("work volume = %#v, want PVC multi-john-work", volume)
+	if volume := volumeByName(template.Spec.Volumes, workVolumeName); volume == nil || volume.PersistentVolumeClaim == nil || volume.PersistentVolumeClaim.ClaimName != "john-work" {
+		t.Fatalf("work volume = %#v, want PVC john-work", volume)
 	}
 	if volume := volumeByName(template.Spec.Volumes, "scratch"); volume == nil || volume.EmptyDir == nil {
 		t.Fatalf("scratch volume = %#v, want emptyDir", volume)
@@ -120,7 +120,7 @@ func TestJobSpecRejectsInvalidPodTemplatePatch(t *testing.T) {
 		"run-id",
 		1,
 		1,
-		map[string]string{"multi-john/run-id": "run-id"},
+		map[string]string{runIDLabel: "run-id"},
 	)
 	if err == nil {
 		t.Fatalf("jobSpec succeeded with an invalid pod template patch")
@@ -139,7 +139,7 @@ func TestJobSpecOmitsEmptyResourceLimits(t *testing.T) {
 		"run-id",
 		1,
 		1,
-		map[string]string{"multi-john/run-id": "run-id"},
+		map[string]string{runIDLabel: "run-id"},
 	)
 	if err != nil {
 		t.Fatalf("jobSpec returned error: %v", err)
@@ -198,14 +198,14 @@ func testController(patch string) *Controller {
 	return &Controller{
 		config: ControllerConfig{
 			Namespace:              "default",
-			Image:                  "ghcr.io/adamanteye/multi-john:test",
+			Image:                  "ghcr.io/adamanteye/john:test",
 			ImagePullPolicy:        string(corev1.PullIfNotPresent),
 			EtcdEndpoint:           "etcd:2379",
 			JohnPath:               "john",
 			InputPath:              "/input",
 			InputFile:              "hashes",
 			WorkPath:               "/work",
-			WorkPVCName:            "multi-john-work",
+			WorkPVCName:            "john-work",
 			LogLevel:               "debug",
 			RequestCPU:             "250m",
 			RequestMemory:          "64Mi",

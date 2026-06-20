@@ -23,11 +23,12 @@ import (
 )
 
 const (
-	appName         = "multi-john"
+	appName         = "john"
 	workerComponent = "worker"
 	workerName      = "worker"
 	inputVolumeName = "input"
 	workVolumeName  = "work"
+	runIDLabel      = "john/run-id"
 )
 
 type Controller struct {
@@ -46,6 +47,7 @@ type ControllerConfig struct {
 	InputFile              string
 	WorkPath               string
 	WorkPVCName            string
+	Instance               string
 	LogLevel               string
 	DefaultJohnFlags       string
 	DefaultTotalNodes      int32
@@ -100,23 +102,24 @@ func NewControllerFromEnv(logger *zap.Logger) (*Controller, error) {
 
 func controllerConfigFromEnv() ControllerConfig {
 	return ControllerConfig{
-		Namespace:              envString("MULTI_JOHN_NAMESPACE", namespace()),
-		Image:                  envString("MULTI_JOHN_IMAGE", "multi-john:latest"),
-		ImagePullPolicy:        envString("MULTI_JOHN_IMAGE_PULL_POLICY", string(corev1.PullIfNotPresent)),
+		Namespace:              envString("JOHN_NAMESPACE", namespace()),
+		Image:                  envString("JOHN_IMAGE", "john:latest"),
+		ImagePullPolicy:        envString("JOHN_IMAGE_PULL_POLICY", string(corev1.PullIfNotPresent)),
 		EtcdEndpoint:           envString("ETCD_ADVERTISE_CLIENT_URLS", "etcd:2379"),
-		JohnPath:               envString("MULTI_JOHN_JOHN_PATH", "john"),
-		InputPath:              envString("MULTI_JOHN_INPUT_PATH", "/input"),
-		InputFile:              envString("MULTI_JOHN_INPUT_FILE", "hashes"),
-		WorkPath:               envString("MULTI_JOHN_WORK_PATH", "/work"),
-		WorkPVCName:            envString("MULTI_JOHN_WORK_PVC_NAME", ""),
-		LogLevel:               envString("MULTI_JOHN_LOG_LEVEL", "info"),
-		DefaultJohnFlags:       envString("MULTI_JOHN_DEFAULT_JOHN_FLAGS", ""),
-		DefaultTotalNodes:      envInt32("MULTI_JOHN_DEFAULT_TOTAL_NODES", 2),
-		RequestCPU:             envString("MULTI_JOHN_WORKER_REQUEST_CPU", "250m"),
-		RequestMemory:          envString("MULTI_JOHN_WORKER_REQUEST_MEMORY", "64Mi"),
-		LimitCPU:               envString("MULTI_JOHN_WORKER_LIMIT_CPU", ""),
-		LimitMemory:            envString("MULTI_JOHN_WORKER_LIMIT_MEMORY", ""),
-		WorkerPodTemplatePatch: envString("MULTI_JOHN_WORKER_POD_TEMPLATE_PATCH", ""),
+		JohnPath:               envString("JOHN_BINARY_PATH", "john"),
+		InputPath:              envString("JOHN_INPUT_PATH", "/input"),
+		InputFile:              envString("JOHN_INPUT_FILE", "hashes"),
+		WorkPath:               envString("JOHN_WORK_PATH", "/work"),
+		WorkPVCName:            envString("JOHN_WORK_PVC_NAME", ""),
+		Instance:               envString("JOHN_INSTANCE", ""),
+		LogLevel:               envString("JOHN_LOG_LEVEL", "info"),
+		DefaultJohnFlags:       envString("JOHN_DEFAULT_FLAGS", ""),
+		DefaultTotalNodes:      envInt32("JOHN_DEFAULT_TOTAL_NODES", 2),
+		RequestCPU:             envString("JOHN_WORKER_REQUEST_CPU", "250m"),
+		RequestMemory:          envString("JOHN_WORKER_REQUEST_MEMORY", "64Mi"),
+		LimitCPU:               envString("JOHN_WORKER_LIMIT_CPU", ""),
+		LimitMemory:            envString("JOHN_WORKER_LIMIT_MEMORY", ""),
+		WorkerPodTemplatePatch: envString("JOHN_WORKER_POD_TEMPLATE_PATCH", ""),
 	}
 }
 
@@ -149,8 +152,11 @@ func (c *Controller) CreateJob(ctx context.Context, req CreateJobRequest) (Creat
 	labels := map[string]string{
 		"app.kubernetes.io/name":       appName,
 		"app.kubernetes.io/component":  workerComponent,
-		"app.kubernetes.io/managed-by": "multi-john",
-		"multi-john/run-id":            runID,
+		"app.kubernetes.io/managed-by": appName,
+		runIDLabel:                     runID,
+	}
+	if c.config.Instance != "" {
+		labels["app.kubernetes.io/instance"] = c.config.Instance
 	}
 
 	secret := &corev1.Secret{
@@ -263,9 +269,9 @@ func (c *Controller) workerContainer(req CreateJobRequest, inputFile, runID stri
 			{Name: "ETCD_ADVERTISE_CLIENT_URLS", Value: c.config.EtcdEndpoint},
 			{Name: "JOHN_PATH", Value: c.config.JohnPath},
 			{Name: "TOTAL_NODES", Value: strconv.Itoa(int(totalNodes))},
-			{Name: "MULTI_JOHN_RUN_ID", Value: runID},
+			{Name: "JOHN_RUN_ID", Value: runID},
 			{
-				Name: "MULTI_JOHN_NODE_INDEX",
+				Name: "JOHN_NODE_INDEX",
 				ValueFrom: &corev1.EnvVarSource{
 					FieldRef: &corev1.ObjectFieldSelector{
 						FieldPath: "metadata.annotations['batch.kubernetes.io/job-completion-index']",
@@ -412,8 +418,15 @@ func (c *Controller) resources() corev1.ResourceRequirements {
 }
 
 func (c *Controller) ListJobs(ctx context.Context) ([]JobSummary, error) {
+	selector := []string{
+		"app.kubernetes.io/name=" + appName,
+		"app.kubernetes.io/component=" + workerComponent,
+	}
+	if c.config.Instance != "" {
+		selector = append(selector, "app.kubernetes.io/instance="+c.config.Instance)
+	}
 	re, err := c.client.BatchV1().Jobs(c.config.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/name=multi-john,app.kubernetes.io/component=worker",
+		LabelSelector: strings.Join(selector, ","),
 	})
 	if err != nil {
 		return nil, err
@@ -423,7 +436,7 @@ func (c *Controller) ListJobs(ctx context.Context) ([]JobSummary, error) {
 		createdAt := job.CreationTimestamp.Time
 		summary := JobSummary{
 			Name:      job.Name,
-			RunID:     job.Labels["multi-john/run-id"],
+			RunID:     job.Labels[runIDLabel],
 			Active:    job.Status.Active,
 			Succeeded: job.Status.Succeeded,
 			Failed:    job.Status.Failed,
@@ -453,7 +466,7 @@ func runID(name string) string {
 		slug = slug[:40]
 		slug = strings.Trim(slug, "-")
 	}
-	return "multi-john-" + slug + "-" + strings.Split(uuid.NewString(), "-")[0]
+	return appName + "-" + slug + "-" + strings.Split(uuid.NewString(), "-")[0]
 }
 
 func namespace() string {
