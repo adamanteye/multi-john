@@ -3,7 +3,7 @@ on:
   push:
     tags:
       - '*.*.*'
-      - '!multi-john-*'
+      - '!john-*'
 jobs:
   call-docker-build:
     permissions:
