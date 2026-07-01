@@ -8,7 +8,7 @@ helm install john ./charts/john -n <namespace> --values charts/john/values.yaml
 kubectl port-forward -n <namespace> service/john-howdy 8080:8080
 ```
 
-Open `http://localhost:8080` to submit hash input. The controller stores hashes in a Secret and creates an Indexed Job with the requested shard count, parallelism, and optional node selector.
+Open `http://localhost:8080` to submit the run YAML from the editor. The controller creates the Kubernetes objects in the editor as-is.
 
 The chart creates a shared workspace PVC by default:
 
@@ -23,9 +23,39 @@ john:
 
 The same PVC is mounted into the controller and every worker Job. Set `john.work.existingClaim` to reuse an existing PVC. By default, resource names are based on the Helm release name, so `helm install john ...` creates `john-howdy`, `john-etcd`, `john-controller`, and `john-work`.
 
-Values configure the controller, UI defaults, and worker runtime defaults. Hashes, shard count, John flags, and node selector are submitted per run through the controller.
+Values configure the controller, UI defaults, and worker runtime defaults. The Web UI starts each submission with generated Kubernetes YAML containing a Secret and the full worker `batch/v1` Job.
 
-Worker Jobs can be customized with a strategic merge patch applied to the generated Job `spec.template`:
+Each run is submitted as Kubernetes YAML documents:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: raw-sha256-batch-in
+stringData:
+  hashes: |-
+    ...
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: raw-sha256-batch
+spec:
+  completions: 5
+  parallelism: 5
+  template:
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/adamanteye/john:latest
+          args:
+            - --mode=worker
+            - --johnFile=/input/hashes
+            - --johnFlags=
+            - --logLevel=debug
+```
+
+Worker Jobs can be customized with a strategic merge patch applied when generating the default Job YAML shown in the editor:
 
 ```yaml
 john:

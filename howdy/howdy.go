@@ -31,8 +31,7 @@ type Node struct {
 }
 
 type UIConfig struct {
-	DefaultJohnFlags  string `json:"defaultJohnFlags"`
-	DefaultTotalNodes int32  `json:"defaultTotalNodes"`
+	DefaultJobYAML string `json:"defaultJobYAML"`
 }
 
 type WorkListing struct {
@@ -121,10 +120,15 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	cfg := UIConfig{DefaultJohnFlags: "", DefaultTotalNodes: 5}
+	cfg := UIConfig{}
 	if s.controller != nil {
-		cfg.DefaultJohnFlags = s.controller.config.DefaultJohnFlags
-		cfg.DefaultTotalNodes = s.controller.config.DefaultTotalNodes
+		defaultJobYAML, err := s.controller.defaultCreateJobYAML()
+		if err != nil {
+			s.log.Error(err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		cfg.DefaultJobYAML = defaultJobYAML
 	}
 	writeJSON(w, http.StatusOK, cfg)
 }

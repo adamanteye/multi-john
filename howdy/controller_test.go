@@ -1,13 +1,119 @@
 package howdy
 
 import (
+	"context"
 	"os"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
-func TestJobSpecMountsWorkPVCAndAppliesPodTemplatePatch(t *testing.T) {
+func TestDefaultCreateJobYAMLRejectsInvalidPodTemplatePatch(t *testing.T) {
+	controller := testController(`{"spec":{"containers":`)
+	_, err := controller.defaultCreateJobYAML()
+	if err == nil {
+		t.Fatalf("defaultCreateJobYAML succeeded with an invalid pod template patch")
+	}
+}
+
+func TestCreateJobSubmitsYAMLAsIs(t *testing.T) {
+	controller := testController("")
+	controller.client = fake.NewSimpleClientset()
+
+	created, err := controller.CreateJob(context.Background(), CreateJobRequest{JobYAML: `apiVersion: v1
+kind: Secret
+metadata:
+  name: custom-input
+  namespace: default
+stringData:
+  hashes: |-
+    hash
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: custom-job
+  namespace: default
+  labels:
+    team: security
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: worker
+          image: example.com/custom:test
+          args:
+            - --custom
+`})
+	if err != nil {
+		t.Fatalf("CreateJob returned error: %v", err)
+	}
+	if created.JobName != "custom-job" {
+		t.Fatalf("created job name = %q, want custom-job", created.JobName)
+	}
+	if created.RunID != "custom-job" {
+		t.Fatalf("created run id = %q, want custom-job", created.RunID)
+	}
+	if created.SecretName != "custom-input" {
+		t.Fatalf("created secret name = %q, want custom-input", created.SecretName)
+	}
+
+	job, err := controller.client.BatchV1().Jobs("default").Get(context.Background(), "custom-job", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get created job: %v", err)
+	}
+	if _, ok := job.Labels[runIDLabel]; ok {
+		t.Fatalf("job labels include controller run label: %#v", job.Labels)
+	}
+	worker := containerByName(job.Spec.Template.Spec.Containers, workerName)
+	if worker == nil {
+		t.Fatalf("worker container not found")
+	}
+	if worker.Image != "example.com/custom:test" {
+		t.Fatalf("worker image = %q, want submitted image", worker.Image)
+	}
+	if len(worker.Args) != 1 || worker.Args[0] != "--custom" {
+		t.Fatalf("worker args = %#v, want submitted args", worker.Args)
+	}
+	if len(worker.Env) != 0 {
+		t.Fatalf("worker env = %#v, want submitted env only", worker.Env)
+	}
+	if len(job.Spec.Template.Spec.Volumes) != 0 {
+		t.Fatalf("job volumes = %#v, want submitted volumes only", job.Spec.Template.Spec.Volumes)
+	}
+}
+
+func TestDefaultCreateJobYAMLOmitsEmptyResourceLimits(t *testing.T) {
+	controller := testController("")
+	controller.config.LimitCPU = ""
+	controller.config.LimitMemory = ""
+
+	jobYAML, err := controller.defaultCreateJobYAML()
+	if err != nil {
+		t.Fatalf("defaultCreateJobYAML returned error: %v", err)
+	}
+	objects, err := parseSubmittedObjects(jobYAML)
+	if err != nil {
+		t.Fatalf("parseSubmittedObjects returned error: %v", err)
+	}
+
+	worker := containerByName(objects.Job.Spec.Template.Spec.Containers, workerName)
+	if worker == nil {
+		t.Fatalf("worker container not found")
+	}
+	if len(worker.Resources.Limits) != 0 {
+		t.Fatalf("resource limits = %#v, want none", worker.Resources.Limits)
+	}
+	if len(worker.Resources.Requests) == 0 {
+		t.Fatalf("resource requests should still be set")
+	}
+}
+
+func TestDefaultCreateJobYAMLIncludesSecretJobDefaultsAndPatch(t *testing.T) {
 	controller := testController(`{
 		"metadata": {
 			"annotations": {
@@ -17,143 +123,62 @@ func TestJobSpecMountsWorkPVCAndAppliesPodTemplatePatch(t *testing.T) {
 		"spec": {
 			"nodeSelector": {
 				"zone": "template"
-			},
-			"affinity": {
-				"nodeAffinity": {
-					"requiredDuringSchedulingIgnoredDuringExecution": {
-						"nodeSelectorTerms": [
-							{
-								"matchExpressions": [
-									{"key": "disk", "operator": "In", "values": ["fast"]}
-								]
-							}
-						]
-					}
-				}
-			},
-			"containers": [
-				{
-					"name": "worker",
-					"env": [
-						{"name": "TOTAL_NODES", "value": "999"},
-						{"name": "EXTRA_ENV", "value": "1"}
-					],
-					"volumeMounts": [
-						{"name": "scratch", "mountPath": "/scratch"}
-					]
-				}
-			],
-			"volumes": [
-				{"name": "scratch", "emptyDir": {}}
-			]
+			}
 		}
 	}`)
-	job, err := controller.jobSpec(
-		CreateJobRequest{
-			JohnFlags:    "--format=raw-sha256",
-			NodeSelector: map[string]string{"zone": "request", "nodepool": "cpu"},
-		},
-		"job-name",
-		"hash-secret",
-		"run-id",
-		5,
-		5,
-		map[string]string{runIDLabel: "run-id"},
-	)
+	controller.config.DefaultJohnFlags = "--format=raw-sha256"
+
+	jobYAML, err := controller.defaultCreateJobYAML()
 	if err != nil {
-		t.Fatalf("jobSpec returned error: %v", err)
+		t.Fatalf("defaultCreateJobYAML returned error: %v", err)
 	}
-
-	template := job.Spec.Template
-	if got := template.Annotations["example.com/template"]; got != "patched" {
-		t.Fatalf("template annotation = %q, want patched", got)
+	objects, err := parseSubmittedObjects(jobYAML)
+	if err != nil {
+		t.Fatalf("parseSubmittedObjects returned error: %v\n%s", err, jobYAML)
 	}
-	if template.Spec.NodeSelector["zone"] != "request" {
-		t.Fatalf("request node selector should override template selector")
+	if len(objects.Secrets) != 1 {
+		t.Fatalf("got %d secrets, want 1", len(objects.Secrets))
 	}
-	if template.Spec.NodeSelector["nodepool"] != "cpu" {
-		t.Fatalf("request node selector was not merged")
+	secret := objects.Secrets[0]
+	if secret.Name != "raw-sha256-batch-in" {
+		t.Fatalf("secret name = %q, want raw-sha256-batch-in", secret.Name)
 	}
-	if template.Spec.Affinity == nil || template.Spec.Affinity.NodeAffinity == nil {
-		t.Fatalf("affinity patch was not applied")
+	if secret.StringData["hashes"] != "" {
+		t.Fatalf("default secret hashes = %q, want empty", secret.StringData["hashes"])
 	}
-
-	worker := containerByName(template.Spec.Containers, workerName)
+	if objects.Job.Name != "raw-sha256-batch" {
+		t.Fatalf("default job name = %q, want raw-sha256-batch", objects.Job.Name)
+	}
+	if got := int32Value(objects.Job.Spec.Completions); got != 5 {
+		t.Fatalf("default completions = %d, want 5", got)
+	}
+	if got := objects.Job.Spec.Template.Annotations["example.com/template"]; got != "patched" {
+		t.Fatalf("default template annotation = %q, want patched", got)
+	}
+	if got := objects.Job.Spec.Template.Spec.NodeSelector["zone"]; got != "template" {
+		t.Fatalf("default node selector zone = %q, want template", got)
+	}
+	worker := containerByName(objects.Job.Spec.Template.Spec.Containers, workerName)
 	if worker == nil {
 		t.Fatalf("worker container not found")
 	}
-	if got := envValue(worker.Env, "TOTAL_NODES"); got != "5" {
-		t.Fatalf("TOTAL_NODES = %q, want controller value 5", got)
+	if worker.Image != controller.config.Image {
+		t.Fatalf("worker image = %q, want %q", worker.Image, controller.config.Image)
 	}
-	if got := envValue(worker.Env, "EXTRA_ENV"); got != "1" {
-		t.Fatalf("EXTRA_ENV = %q, want 1", got)
+	if !strings.Contains(strings.Join(worker.Args, "\n"), "--johnFlags=--format=raw-sha256") {
+		t.Fatalf("worker args = %#v, want default john flags", worker.Args)
 	}
-	if mount := volumeMountByName(worker.VolumeMounts, inputVolumeName); mount == nil || mount.MountPath != "/input" || !mount.ReadOnly {
-		t.Fatalf("input volume mount = %#v, want read-only /input", mount)
-	}
-	if mount := volumeMountByName(worker.VolumeMounts, workVolumeName); mount == nil || mount.MountPath != "/work" || mount.ReadOnly {
-		t.Fatalf("work volume mount = %#v, want writable /work", mount)
-	}
-	if mount := volumeMountByName(worker.VolumeMounts, "scratch"); mount == nil || mount.MountPath != "/scratch" {
-		t.Fatalf("scratch volume mount = %#v, want /scratch", mount)
-	}
-	if volume := volumeByName(template.Spec.Volumes, workVolumeName); volume == nil || volume.PersistentVolumeClaim == nil || volume.PersistentVolumeClaim.ClaimName != "john-work" {
-		t.Fatalf("work volume = %#v, want PVC john-work", volume)
-	}
-	if volume := volumeByName(template.Spec.Volumes, "scratch"); volume == nil || volume.EmptyDir == nil {
-		t.Fatalf("scratch volume = %#v, want emptyDir", volume)
-	}
-	if job.Spec.ActiveDeadlineSeconds != nil {
-		t.Fatalf("activeDeadlineSeconds = %v, want nil", *job.Spec.ActiveDeadlineSeconds)
-	}
-	if job.Spec.TTLSecondsAfterFinished != nil {
-		t.Fatalf("ttlSecondsAfterFinished = %v, want nil", *job.Spec.TTLSecondsAfterFinished)
+	if volume := volumeByName(objects.Job.Spec.Template.Spec.Volumes, inputVolumeName); volume == nil || volume.Secret == nil || volume.Secret.SecretName != "raw-sha256-batch-in" {
+		t.Fatalf("input volume = %#v, want secret raw-sha256-batch-in", volume)
 	}
 }
 
-func TestJobSpecRejectsInvalidPodTemplatePatch(t *testing.T) {
-	controller := testController(`{"spec":{"containers":`)
-	_, err := controller.jobSpec(
-		CreateJobRequest{JohnFlags: "--format=raw-sha256"},
-		"job-name",
-		"hash-secret",
-		"run-id",
-		1,
-		1,
-		map[string]string{runIDLabel: "run-id"},
-	)
-	if err == nil {
-		t.Fatalf("jobSpec succeeded with an invalid pod template patch")
+func TestParseSubmittedObjectsRejectsInvalidShape(t *testing.T) {
+	if _, err := parseSubmittedObjects("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: unsupported\n"); err == nil {
+		t.Fatalf("parseSubmittedObjects succeeded with an unsupported kind")
 	}
-}
-
-func TestJobSpecOmitsEmptyResourceLimits(t *testing.T) {
-	controller := testController("")
-	controller.config.LimitCPU = ""
-	controller.config.LimitMemory = ""
-
-	job, err := controller.jobSpec(
-		CreateJobRequest{JohnFlags: "--format=raw-sha256"},
-		"job-name",
-		"hash-secret",
-		"run-id",
-		1,
-		1,
-		map[string]string{runIDLabel: "run-id"},
-	)
-	if err != nil {
-		t.Fatalf("jobSpec returned error: %v", err)
-	}
-
-	worker := containerByName(job.Spec.Template.Spec.Containers, workerName)
-	if worker == nil {
-		t.Fatalf("worker container not found")
-	}
-	if len(worker.Resources.Limits) != 0 {
-		t.Fatalf("resource limits = %#v, want none", worker.Resources.Limits)
-	}
-	if len(worker.Resources.Requests) == 0 {
-		t.Fatalf("resource requests should still be set")
+	if _, err := parseSubmittedObjects("apiVersion: v1\nkind: Secret\nmetadata:\n  name: only-secret\n"); err == nil {
+		t.Fatalf("parseSubmittedObjects succeeded without a Job")
 	}
 }
 
@@ -207,6 +232,7 @@ func testController(patch string) *Controller {
 			WorkPath:               "/work",
 			WorkPVCName:            "john-work",
 			LogLevel:               "debug",
+			DefaultTotalNodes:      5,
 			RequestCPU:             "250m",
 			RequestMemory:          "64Mi",
 			LimitCPU:               "500m",

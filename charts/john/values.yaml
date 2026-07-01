@@ -1,14 +1,12 @@
 nameOverride: ""
 fullnameOverride: ""
-
 serviceAccount:
   create: true
   annotations: {}
   name: ""
-
 john:
   # Common configuration across the entire application.
-  imageName: ghcr.io/adamanteye/john:0.1.0
+  imageName: ghcr.io/adamanteye/john:0.1.1
   imagePullPolicy: IfNotPresent
   logLevel: debug
   # Shared workspace mounted into the controller and every worker Job at /work.

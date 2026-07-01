@@ -84,6 +84,9 @@ const indexHTML = `<!doctype html>
       min-height: 12rem;
       resize: vertical;
     }
+    textarea.job-yaml {
+      min-height: 34rem;
+    }
     button {
       padding: 0.35rem 0.7rem;
       border: 1px solid var(--link);
@@ -165,14 +168,7 @@ const indexHTML = `<!doctype html>
   <main>
     <h2>Submit</h2>
     <form id="jobForm">
-      <label><span>Run name</span><input id="name" autocomplete="off" placeholder="raw-sha256-batch"></label>
-      <label><span>Hashes</span><textarea id="hashes" required spellcheck="false"></textarea></label>
-      <label><span>John flags</span><input id="johnFlags" spellcheck="false"></label>
-      <div class="grid">
-        <label><span>Total nodes</span><input id="totalNodes" type="number" min="1"></label>
-        <label><span>Parallelism</span><input id="parallelism" type="number" min="1"></label>
-      </div>
-      <label><span>Node selector</span><input id="nodeSelector" placeholder="nodepool=cpu-workers" spellcheck="false"></label>
+      <label><span>Job YAML</span><textarea id="jobYAML" class="job-yaml" required spellcheck="false"></textarea></label>
       <div class="actions">
         <button id="submit" type="submit">Create job</button>
         <button id="refresh" type="button">Refresh</button>
@@ -207,9 +203,7 @@ const indexHTML = `<!doctype html>
 
     async function loadConfig() {
       const config = await request('/api/config');
-      document.getElementById('johnFlags').value = config.defaultJohnFlags || '';
-      document.getElementById('totalNodes').value = config.defaultTotalNodes || 1;
-      document.getElementById('parallelism').value = config.defaultTotalNodes || 1;
+      document.getElementById('jobYAML').value = config.defaultJobYAML || '';
     }
 
     async function loadJobs() {
@@ -277,18 +271,6 @@ const indexHTML = `<!doctype html>
       return count;
     }
 
-    function parseNodeSelector(value) {
-      const selector = {};
-      for (const item of value.split(',')) {
-        const part = item.trim();
-        if (!part) continue;
-        const index = part.indexOf('=');
-        if (index < 1) throw new Error('Node selector must use key=value pairs');
-        selector[part.slice(0, index).trim()] = part.slice(index + 1).trim();
-      }
-      return selector;
-    }
-
     function escapeHTML(value) {
       return String(value).replace(/[&<>"']/g, (char) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[char]));
     }
@@ -312,12 +294,7 @@ const indexHTML = `<!doctype html>
       statusEl.textContent = 'Creating...';
       try {
         const payload = {
-          name: document.getElementById('name').value,
-          hashes: document.getElementById('hashes').value,
-          johnFlags: document.getElementById('johnFlags').value,
-          totalNodes: Number(document.getElementById('totalNodes').value),
-          parallelism: Number(document.getElementById('parallelism').value),
-          nodeSelector: parseNodeSelector(document.getElementById('nodeSelector').value)
+          jobYAML: document.getElementById('jobYAML').value
         };
         const created = await request('/api/jobs', {
           method: 'POST',

@@ -14,12 +14,12 @@ import (
 	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	sigsYaml "sigs.k8s.io/yaml"
 )
 
 const (
@@ -32,7 +32,7 @@ const (
 )
 
 type Controller struct {
-	client *kubernetes.Clientset
+	client kubernetes.Interface
 	config ControllerConfig
 	log    *zap.SugaredLogger
 }
@@ -59,12 +59,12 @@ type ControllerConfig struct {
 }
 
 type CreateJobRequest struct {
-	Name         string            `json:"name"`
-	Hashes       string            `json:"hashes"`
-	JohnFlags    string            `json:"johnFlags"`
-	TotalNodes   int32             `json:"totalNodes"`
-	Parallelism  int32             `json:"parallelism"`
-	NodeSelector map[string]string `json:"nodeSelector"`
+	JobYAML string `json:"jobYAML"`
+}
+
+type submittedObjects struct {
+	Secrets []corev1.Secret
+	Job     batchv1.Job
 }
 
 type CreatedJob struct {
@@ -124,31 +124,149 @@ func controllerConfigFromEnv() ControllerConfig {
 }
 
 func (c *Controller) CreateJob(ctx context.Context, req CreateJobRequest) (CreatedJob, error) {
-	if strings.TrimSpace(req.Hashes) == "" {
-		return CreatedJob{}, fmt.Errorf("hashes are required")
-	}
-	if len(req.Hashes) > 4*1024*1024 {
-		return CreatedJob{}, fmt.Errorf("hash input is too large")
-	}
-	if strings.TrimSpace(req.JohnFlags) == "" {
-		req.JohnFlags = c.config.DefaultJohnFlags
+	objects, err := parseSubmittedObjects(req.JobYAML)
+	if err != nil {
+		return CreatedJob{}, err
 	}
 
-	totalNodes := req.TotalNodes
+	secretName := ""
+	for _, secret := range objects.Secrets {
+		namespace := c.objectNamespace(secret.Namespace)
+		created, err := c.client.CoreV1().Secrets(namespace).Create(ctx, secret.DeepCopy(), metav1.CreateOptions{})
+		if err != nil {
+			return CreatedJob{}, err
+		}
+		if secretName == "" {
+			secretName = created.Name
+		}
+	}
+
+	namespace := c.objectNamespace(objects.Job.Namespace)
+	job, err := c.client.BatchV1().Jobs(namespace).Create(ctx, objects.Job.DeepCopy(), metav1.CreateOptions{})
+	if err != nil {
+		return CreatedJob{}, err
+	}
+
+	runID := job.Labels[runIDLabel]
+	if runID == "" {
+		runID = job.Name
+	}
+	return CreatedJob{RunID: runID, JobName: job.Name, SecretName: secretName}, nil
+}
+
+func parseSubmittedObjects(value string) (submittedObjects, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return submittedObjects{}, fmt.Errorf("job YAML is required")
+	}
+
+	var out submittedObjects
+	for _, document := range splitYAMLDocuments(value) {
+		var typeMeta metav1.TypeMeta
+		if err := sigsYaml.Unmarshal([]byte(document), &typeMeta); err != nil {
+			return submittedObjects{}, fmt.Errorf("job YAML: %w", err)
+		}
+		switch typeMeta.Kind {
+		case "Secret":
+			if typeMeta.APIVersion != "" && typeMeta.APIVersion != "v1" {
+				return submittedObjects{}, fmt.Errorf("job YAML: Secret apiVersion must be v1")
+			}
+			var secret corev1.Secret
+			if err := sigsYaml.UnmarshalStrict([]byte(document), &secret); err != nil {
+				return submittedObjects{}, fmt.Errorf("job YAML Secret: %w", err)
+			}
+			out.Secrets = append(out.Secrets, secret)
+		case "Job":
+			if typeMeta.APIVersion != "" && typeMeta.APIVersion != "batch/v1" {
+				return submittedObjects{}, fmt.Errorf("job YAML: Job apiVersion must be batch/v1")
+			}
+			if out.Job.Name != "" || out.Job.GenerateName != "" {
+				return submittedObjects{}, fmt.Errorf("job YAML: exactly one Job is supported")
+			}
+			if err := sigsYaml.UnmarshalStrict([]byte(document), &out.Job); err != nil {
+				return submittedObjects{}, fmt.Errorf("job YAML Job: %w", err)
+			}
+		default:
+			return submittedObjects{}, fmt.Errorf("job YAML: unsupported kind %q", typeMeta.Kind)
+		}
+	}
+	if out.Job.Name == "" && out.Job.GenerateName == "" {
+		return submittedObjects{}, fmt.Errorf("job YAML: one Job document is required")
+	}
+	return out, nil
+}
+
+func splitYAMLDocuments(value string) []string {
+	parts := strings.Split(value, "\n---")
+	documents := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(strings.TrimPrefix(part, "---"))
+		if part != "" {
+			documents = append(documents, part)
+		}
+	}
+	return documents
+}
+
+func (c *Controller) defaultCreateJobYAML() (string, error) {
+	totalNodes := c.config.DefaultTotalNodes
 	if totalNodes < 1 {
-		totalNodes = c.config.DefaultTotalNodes
+		totalNodes = 1
 	}
-	parallelism := req.Parallelism
-	if parallelism < 1 {
-		parallelism = totalNodes
+	runID := "raw-sha256-batch"
+	secretName := "raw-sha256-batch-in"
+	mode := batchv1.IndexedCompletion
+	backoffLimit := int32(0)
+	labels := c.controllerLabels(runID)
+	secret := &corev1.Secret{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: c.config.Namespace,
+			Labels:    labels,
+		},
+		Type: corev1.SecretTypeOpaque,
+		StringData: map[string]string{
+			c.config.InputFile: "",
+		},
 	}
-	if parallelism > totalNodes {
-		return CreatedJob{}, fmt.Errorf("parallelism cannot exceed totalNodes")
+	job := &batchv1.Job{
+		TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      runID,
+			Namespace: c.config.Namespace,
+			Labels:    labels,
+		},
+		Spec: batchv1.JobSpec{
+			Completions:    &totalNodes,
+			Parallelism:    &totalNodes,
+			CompletionMode: &mode,
+			BackoffLimit:   &backoffLimit,
+		},
+	}
+	defaultPatch, err := podTemplatePatch(labels, c.workerContainer(c.config.DefaultJohnFlags, c.config.InputPath+"/"+c.config.InputFile, runID, totalNodes), c.workerVolumes(secretName))
+	if err != nil {
+		return "", err
+	}
+	if err := applyPodTemplatePatch(&job.Spec.Template, defaultPatch); err != nil {
+		return "", fmt.Errorf("worker pod template defaults: %w", err)
+	}
+	if err := applyPodTemplatePatch(&job.Spec.Template, c.config.WorkerPodTemplatePatch); err != nil {
+		return "", fmt.Errorf("worker pod template patch: %w", err)
 	}
 
-	runID := runID(req.Name)
-	jobName := runID
-	secretName := runID + "-in"
+	secretYAML, err := sigsYaml.Marshal(secret)
+	if err != nil {
+		return "", err
+	}
+	jobYAML, err := sigsYaml.Marshal(job)
+	if err != nil {
+		return "", err
+	}
+	return "# This YAML is submitted as-is. Edit names before submitting another run.\n" + string(secretYAML) + "---\n" + string(jobYAML), nil
+}
+
+func (c *Controller) controllerLabels(runID string) map[string]string {
 	labels := map[string]string{
 		"app.kubernetes.io/name":       appName,
 		"app.kubernetes.io/component":  workerComponent,
@@ -158,97 +276,52 @@ func (c *Controller) CreateJob(ctx context.Context, req CreateJobRequest) (Creat
 	if c.config.Instance != "" {
 		labels["app.kubernetes.io/instance"] = c.config.Instance
 	}
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: c.config.Namespace,
-			Labels:    labels,
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			c.config.InputFile: []byte(req.Hashes),
-		},
-	}
-	createdSecret, err := c.client.CoreV1().Secrets(c.config.Namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		return CreatedJob{}, err
-	}
-
-	jobSpec, err := c.jobSpec(req, jobName, secretName, runID, totalNodes, parallelism, labels)
-	if err != nil {
-		if deleteErr := c.client.CoreV1().Secrets(c.config.Namespace).Delete(ctx, secretName, metav1.DeleteOptions{}); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
-			c.log.Error(deleteErr)
-		}
-		return CreatedJob{}, err
-	}
-
-	job, err := c.client.BatchV1().Jobs(c.config.Namespace).Create(ctx, jobSpec, metav1.CreateOptions{})
-	if err != nil {
-		if deleteErr := c.client.CoreV1().Secrets(c.config.Namespace).Delete(ctx, secretName, metav1.DeleteOptions{}); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
-			c.log.Error(deleteErr)
-		}
-		return CreatedJob{}, err
-	}
-
-	createdSecret.OwnerReferences = []metav1.OwnerReference{
-		*metav1.NewControllerRef(job, batchv1.SchemeGroupVersion.WithKind("Job")),
-	}
-	if _, err := c.client.CoreV1().Secrets(c.config.Namespace).Update(ctx, createdSecret, metav1.UpdateOptions{}); err != nil {
-		c.log.Warnf("created job %s but could not attach owner reference to secret %s: %v", jobName, secretName, err)
-	}
-
-	return CreatedJob{RunID: runID, JobName: jobName, SecretName: secretName}, nil
+	return labels
 }
 
-func (c *Controller) jobSpec(req CreateJobRequest, jobName, secretName, runID string, totalNodes, parallelism int32, labels map[string]string) (*batchv1.Job, error) {
-	mode := batchv1.IndexedCompletion
-	backoffLimit := int32(0)
-	inputFile := c.config.InputPath + "/" + c.config.InputFile
-	workerContainer := c.workerContainer(req, inputFile, runID, totalNodes)
-	requiredVolumes := c.workerVolumes(secretName)
-
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      jobName,
-			Namespace: c.config.Namespace,
-			Labels:    labels,
-		},
-		Spec: batchv1.JobSpec{
-			Completions:    &totalNodes,
-			Parallelism:    &parallelism,
-			CompletionMode: &mode,
-			BackoffLimit:   &backoffLimit,
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyNever,
-					NodeSelector:  req.NodeSelector,
-					Containers: []corev1.Container{
-						workerContainer,
-					},
-					Volumes: requiredVolumes,
-				},
-			},
-		},
+func int32Value(value *int32) int32 {
+	if value == nil {
+		return 0
 	}
-
-	if err := applyPodTemplatePatch(&job.Spec.Template, c.config.WorkerPodTemplatePatch); err != nil {
-		return nil, fmt.Errorf("worker pod template patch: %w", err)
-	}
-	if len(req.NodeSelector) > 0 {
-		if job.Spec.Template.Spec.NodeSelector == nil {
-			job.Spec.Template.Spec.NodeSelector = map[string]string{}
-		}
-		for key, value := range req.NodeSelector {
-			job.Spec.Template.Spec.NodeSelector[key] = value
-		}
-	}
-	ensureWorkerTemplate(&job.Spec.Template, labels, workerContainer, requiredVolumes)
-	return job, nil
+	return *value
 }
 
-func (c *Controller) workerContainer(req CreateJobRequest, inputFile, runID string, totalNodes int32) corev1.Container {
+func (c *Controller) objectNamespace(namespace string) string {
+	if namespace != "" {
+		return namespace
+	}
+	return c.config.Namespace
+}
+
+func podTemplatePatch(labels map[string]string, workerContainer corev1.Container, volumes []corev1.Volume) (string, error) {
+	containerPatch := corev1.Container{
+		Name:            workerContainer.Name,
+		Image:           workerContainer.Image,
+		ImagePullPolicy: workerContainer.ImagePullPolicy,
+		Command:         workerContainer.Command,
+		Args:            workerContainer.Args,
+		Env:             workerContainer.Env,
+		Resources:       workerContainer.Resources,
+		VolumeMounts:    workerContainer.VolumeMounts,
+	}
+	templatePatch := corev1.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: labels,
+		},
+		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			Containers:    []corev1.Container{containerPatch},
+			Volumes:       volumes,
+		},
+	}
+	patch, err := json.Marshal(templatePatch)
+	if err != nil {
+		return "", err
+	}
+	return string(patch), nil
+}
+
+func (c *Controller) workerContainer(johnFlags, inputFile, runID string, totalNodes int32) corev1.Container {
 	volumeMounts := []corev1.VolumeMount{{Name: inputVolumeName, MountPath: c.config.InputPath, ReadOnly: true}}
 	if c.config.WorkPVCName != "" {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: workVolumeName, MountPath: c.config.WorkPath})
@@ -262,7 +335,7 @@ func (c *Controller) workerContainer(req CreateJobRequest, inputFile, runID stri
 		Args: []string{
 			"--mode=worker",
 			"--johnFile=" + inputFile,
-			"--johnFlags=" + req.JohnFlags,
+			"--johnFlags=" + johnFlags,
 			"--logLevel=" + c.config.LogLevel,
 		},
 		Env: []corev1.EnvVar{
@@ -325,73 +398,6 @@ func applyPodTemplatePatch(template *corev1.PodTemplateSpec, patch string) error
 	}
 	*template = out
 	return nil
-}
-
-func ensureWorkerTemplate(template *corev1.PodTemplateSpec, labels map[string]string, requiredContainer corev1.Container, requiredVolumes []corev1.Volume) {
-	if template.Labels == nil {
-		template.Labels = map[string]string{}
-	}
-	for key, value := range labels {
-		template.Labels[key] = value
-	}
-	template.Spec.RestartPolicy = corev1.RestartPolicyNever
-
-	for _, volume := range requiredVolumes {
-		upsertVolume(&template.Spec.Volumes, volume)
-	}
-
-	for i := range template.Spec.Containers {
-		if template.Spec.Containers[i].Name == workerName {
-			ensureWorkerContainer(&template.Spec.Containers[i], requiredContainer)
-			return
-		}
-	}
-	template.Spec.Containers = append([]corev1.Container{requiredContainer}, template.Spec.Containers...)
-}
-
-func ensureWorkerContainer(container *corev1.Container, required corev1.Container) {
-	container.Name = required.Name
-	container.Image = required.Image
-	container.ImagePullPolicy = required.ImagePullPolicy
-	container.Command = required.Command
-	container.Args = required.Args
-	container.Resources = required.Resources
-	for _, env := range required.Env {
-		upsertEnv(&container.Env, env)
-	}
-	for _, mount := range required.VolumeMounts {
-		upsertVolumeMount(&container.VolumeMounts, mount)
-	}
-}
-
-func upsertEnv(envs *[]corev1.EnvVar, required corev1.EnvVar) {
-	for i := range *envs {
-		if (*envs)[i].Name == required.Name {
-			(*envs)[i] = required
-			return
-		}
-	}
-	*envs = append(*envs, required)
-}
-
-func upsertVolumeMount(mounts *[]corev1.VolumeMount, required corev1.VolumeMount) {
-	for i := range *mounts {
-		if (*mounts)[i].Name == required.Name {
-			(*mounts)[i] = required
-			return
-		}
-	}
-	*mounts = append(*mounts, required)
-}
-
-func upsertVolume(volumes *[]corev1.Volume, required corev1.Volume) {
-	for i := range *volumes {
-		if (*volumes)[i].Name == required.Name {
-			(*volumes)[i] = required
-			return
-		}
-	}
-	*volumes = append(*volumes, required)
 }
 
 func (c *Controller) resources() corev1.ResourceRequirements {
