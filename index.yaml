@@ -2,8 +2,26 @@ apiVersion: v1
 entries:
   john:
   - apiVersion: v2
+    appVersion: 0.1.1
+    created: "2026-07-01T04:52:32.348418301Z"
+    description: John the Ripper controller and Web UI for Kubernetes.
+    digest: cbe3d8de792249753b88780bfa8f71b1cfe11a4dac3952e7c1978f60e4332b5a
+    home: https://github.com/adamanteye/john
+    keywords:
+    - jtr
+    - john
+    - password-cracking
+    name: john
+    sources:
+    - https://github.com/adamanteye/john
+    - https://github.com/openwall/john
+    type: application
+    urls:
+    - https://adamanteye.github.io/john/john-0.1.1.tgz
+    version: 0.1.1
+  - apiVersion: v2
     appVersion: 0.1.0
-    created: "2026-06-20T04:52:39.339054478Z"
+    created: "2026-07-01T04:52:32.347772584Z"
     description: John the Ripper controller and Web UI for Kubernetes.
     digest: 6ff763d0dc716f46250e809ea36b8e0ec7421b0ea89ad96afe1b6e40a081ca23
     home: https://github.com/adamanteye/john
@@ -19,4 +37,4 @@ entries:
     urls:
     - https://adamanteye.github.io/john/john-0.1.0.tgz
     version: 0.1.0
-generated: "2026-06-20T04:52:39.338307695Z"
+generated: "2026-07-01T04:52:32.346952495Z"
